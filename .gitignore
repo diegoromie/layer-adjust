@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Ambiente Virtual (Essencial) ---
+venv/
+.venv/
+env/
+
+# --- Distribuição e Logs ---
+build/
+dist/
+*.egg-info/
+pip-log.txt
+
+# --- IDEs (Configurações do editor) ---
+.vscode/
+.idea/
+
+# --- Arquivos de Sistema ---
+.DS_Store
+Thumbs.db
+
+# --- Específico do Projeto (Arquivos Temporários) ---
+# Ignora as pastas que o script cria durante o processamento
+temp_processing/
+uploads/
+output/
+
+# --- Arquivos Gerados ---
+*.zip
+*.pdf
+
+# --- Segurança ---
+.env
