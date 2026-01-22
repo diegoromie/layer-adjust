@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+dxfapi.py
+
+#Outros
+newlayers.xlsx
 
 # --- Ambiente Virtual (Essencial) ---
 venv/

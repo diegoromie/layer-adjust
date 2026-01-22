@@ -67,8 +67,8 @@ async def process_dxf(
                 # Prepara o logo: explode tudo para evitar problemas de cópia de blocos aninhados
                 # Usamos o próprio processador para limpar o logo antes de usá-lo como carimbo
                 msp_logo = logos_doc.modelspace()
-                dxf_processor.explode_all_inserts(msp_logo)
-                dxf_processor.remove_unused_layers(logos_doc)
+                dxf_processor.explode_drawing(msp_logo)
+                dxf_processor.purge_blocks(logos_doc)
                 
                 # Remove o logos.dxf da lista de arquivos a serem processados (regras de layer)
                 dxf_files.remove(logos_file)
