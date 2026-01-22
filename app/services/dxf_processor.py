@@ -53,8 +53,15 @@ class DXFProcessorService:
 
         # 8. NUVEM DE REVISÃO (CORRIGIDO)
         if options.manter_nuvem_revisao:
-             print(f"DEBUG: Processando nuvens de revisão no layer '{options.layer_nuvem_origem}'...")
-             self.apply_revcloud(msp, options.layer_nuvem_origem)
+            layer_alvo = options.layer_nuvem_origem
+
+            if layer_alvo in rules:
+                novo_nome = rules[layer_alvo].layer_destino
+                print(f"DEBUG: Layer de nuvem '{layer_alvo}' foi movido para '{novo_nome}'. Usando '{novo_nome}' como alvo.")
+                layer_alvo = novo_nome
+
+            print(f"DEBUG: Processando nuvens de revisão no layer '{layer_alvo}'...")
+            self.apply_revcloud(msp, layer_alvo, arc_radius=6.0)
 
         print("--- FIM DO PROCESSAMENTO ---\n")
         return doc
@@ -69,18 +76,18 @@ class DXFProcessorService:
                 doc.layers.add(name=name, color=color)
             except: pass
 
-        #try:
-        #    layer = doc.layers.get(name)
-        #    layer.dxf.color = color
-        #    layer.dxf.lineweight = lineweight
+        try:
+            layer = doc.layers.get(name)
+            layer.dxf.color = color
+            layer.dxf.lineweight = lineweight
             
-        #    if linetype and linetype.strip().upper() not in ['NONE', '', 'NAN']:
-        #        if linetype in doc.linetypes:
-        #            layer.dxf.linetype = linetype
-        #        elif 'Continuous' in doc.linetypes:
-        #            layer.dxf.linetype = 'Continuous'
-        #except Exception as e:
-        #    print(f"ERRO layer {name}: {e}")
+            if linetype and linetype.strip().upper() not in ['NONE', '', 'NAN']:
+                if linetype in doc.linetypes:
+                    layer.dxf.linetype = linetype
+                elif 'Continuous' in doc.linetypes:
+                    layer.dxf.linetype = 'Continuous'
+        except Exception as e:
+            print(f"ERRO layer {name}: {e}")
 
     def change_layer_entities(self, msp, old_layer: str, new_layer: str):
         try:
@@ -196,40 +203,67 @@ class DXFProcessorService:
     # NUVEM DE REVISÃO (CORRIGIDA - Lógica do seu script)
     # =========================================================================
 
-    def apply_revcloud(self, msp, source_layer):
+    def apply_revcloud(self, msp, source_layer, arc_radius=6.0):
         try:
-            # 1. Fase de COLETA (igual ao seu script)
             polylines_vertices = []
             
-            # Usamos list(msp) para iterar sobre uma cópia segura das entidades
-            # Verificamos o layer manualmente, igual ao seu "if layer in revcloud_layers"
-            found_count = 0
-            for entity in list(msp):
-                # Checagem case-insensitive para segurança
-                if entity.dxf.layer.upper() == source_layer.upper():
-                    if entity.dxftype() == "LWPOLYLINE":
-                        if entity.is_closed:
-                            # Coleta vértices
-                            polylines_vertices.append(list(entity.vertices()))
-                            # Remove entidade original
-                            msp.delete_entity(entity)
-                            found_count += 1
+            # Diagnóstico do Layer
+            entities_on_layer = msp.query(f'*[layer=="{source_layer}"]')
+            print(f"DEBUG: Total de entidades no layer '{source_layer}': {len(entities_on_layer)}")
             
-            print(f"DEBUG: {found_count} polylines convertidas para dados. Criando nuvens...")
+            for entity in list(msp):
+                # Filtra layer (case insensitive)
+                if entity.dxf.layer.upper() != source_layer.upper():
+                    continue
 
-            # 2. Fase de CRIAÇÃO
+                # Diagnóstico detalhado de por que foi ignorado
+                if entity.dxftype() not in ["LWPOLYLINE", "POLYLINE"]:
+                    print(f"DEBUG: Ignorado entidade '{entity.dxftype()}' no layer da nuvem (Esperado: POLYLINE)")
+                    continue
+
+                # Verifica se é fechado (Flag ou Geometria)
+                is_closed = False
+                if entity.is_closed:
+                    is_closed = True
+                else:
+                    # Verifica fechamento visual (Start == End)
+                    try:
+                        points = list(entity.vertices())
+                        if len(points) > 2:
+                            # Compara X e Y do primeiro e último ponto (tolerância pequena)
+                            start = points[0]
+                            end = points[-1]
+                            # vertices() retorna (x, y, z, ...), pegamos os 2 primeiros
+                            if abs(start[0] - end[0]) < 1e-4 and abs(start[1] - end[1]) < 1e-4:
+                                is_closed = True
+                                print("DEBUG: Polilinha geometricamente fechada encontrada (Flag is_closed estava False).")
+                    except Exception as e:
+                        pass
+                
+                if is_closed:
+                    # Coleta vértices
+                    try:
+                        # Para POLYLINE (legacy) e LWPOLYLINE
+                        points = list(entity.vertices())
+                        polylines_vertices.append(points)
+                        msp.delete_entity(entity)
+                    except Exception as e:
+                        print(f"ERRO ao ler vértices: {e}")
+                else:
+                    print(f"DEBUG: Ignorado {entity.dxftype()} aberta (não é um retângulo fechado).")
+
+            # Criação
             created_count = 0
             for points in polylines_vertices:
                 try:
-                    # Cria a nuvem com passo 6.0 (Igual ao seu script)
-                    revcloud = ezdxf.revcloud.add_entity(msp, points, segment_length=6.0)
+                    revcloud = ezdxf.revcloud.add_entity(msp, points, segment_length=arc_radius)
                     revcloud.dxf.layer = source_layer
-                    revcloud.dxf.color = 256 # Garante ByLayer
+                    revcloud.dxf.color = 256
                     created_count += 1
                 except Exception as e:
                     print(f"ERRO criando RevCloud: {e}")
             
-            print(f"DEBUG: {created_count} nuvens de revisão criadas.")
+            print(f"DEBUG: {created_count} nuvens de revisão criadas com sucesso.")
 
         except Exception as e:
             logger.error(f"Erro Crítico em apply_revcloud: {e}")
