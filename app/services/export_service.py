@@ -1,11 +1,11 @@
 import ezdxf
-import os
 import logging
 from pathlib import Path
 from typing import List
 import matplotlib.pyplot as plt
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+from ezdxf.addons import Importer
 
 logger = logging.getLogger(__name__)
 
@@ -13,57 +13,46 @@ class ExportService:
     
     def merge_dxfs_to_single_file(self, file_paths: List[Path], output_path: Path):
         """
-        Cria um único arquivo DXF onde cada arquivo da lista se torna um Layout (Paper Space).
+        Cria um único arquivo DXF usando o Importer para garantir que Layers e Blocos não quebrem.
         """
         if not file_paths:
             return
 
-        # Cria o documento mestre
         doc_master = ezdxf.new()
-        
-        # Ordena arquivos (opcional, mas bom para garantir ordem FL1, FL2...)
-        # Assumindo que o nome do arquivo ajude na ordenação, caso contrário usa a ordem da lista
         file_paths.sort(key=lambda p: p.name)
 
         for i, file_path in enumerate(file_paths):
             try:
-                # Carrega o arquivo individual do disco (apenas este arquivo na RAM)
                 doc_source = ezdxf.readfile(str(file_path))
                 msp_source = doc_source.modelspace()
                 
-                # Define nome do Layout (Ex: FL 01, FL 02...)
+                # Nome do Layout
                 layout_name = f"FL {i+1:02d}"
-                
-                # Cria o layout no mestre
-                # Nota: DXF R2000+ suporta múltiplos layouts.
                 if layout_name in doc_master.layouts:
-                    layout_name = f"FL {i+1:02d}_{file_path.stem}" # Evita duplicatas
+                    layout_name = f"FL {i+1:02d}_{file_path.stem}"
                 
                 layout_target = doc_master.layouts.new(layout_name)
 
-                # --- Cópia de Recursos (Layers, Linetypes, Styles) ---
-                # É crucial copiar os recursos antes das entidades para não dar erro de referência
-                self._copy_resources(doc_source, doc_master)
+                # --- MUDANÇA PRINCIPAL: USAR IMPORTER ---
+                try:
+                    importer = Importer(doc_source, doc_master)
+                    importer.import_tables('*') # Importa Layers, Linetypes, Styles...
+                    importer.finalize()
+                except Exception as e:
+                    logger.warning(f"Aviso importando tabelas de {file_path.name}: {e}")
 
-                # --- Cópia de Entidades ---
-                # Movemos tudo do ModelSpace do arquivo original para o PaperSpace do layout novo
+                # Copia entidades
                 for entity in msp_source:
                     try:
-                        # O método .copy() cria uma entidade desconectada (virtual)
                         new_entity = entity.copy()
                         layout_target.add_entity(new_entity)
-                    except Exception as e:
-                        logger.warning(f"Falha ao copiar entidade {entity.dxftype()} de {file_path.name}: {e}")
-
-                logger.info(f"Arquivo {file_path.name} importado para o layout {layout_name}")
+                    except: pass
                 
-                # Limpa doc_source da memória explicitamente (boa prática em loops pesados)
                 del doc_source 
 
             except Exception as e:
-                logger.error(f"Erro ao mesclar arquivo {file_path.name}: {e}")
+                logger.error(f"Erro ao mesclar {file_path.name}: {e}")
 
-        # Salva o mestre no disco
         doc_master.saveas(str(output_path))
 
 

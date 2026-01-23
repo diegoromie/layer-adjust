@@ -12,6 +12,8 @@ from app.utils.file_manager import FileManager
 from app.services.export_service import ExportService
 
 import ezdxf
+import os
+import shutil
 
 router = APIRouter()
 
@@ -101,12 +103,33 @@ async def process_dxf(
         final_filename = "resultado.zip"
         media_type = "application/zip"
 
+        # MODO ARQUIVO ÚNICO (Merge DXF)
         if options.modo_saida == OutputMode.ARQUIVO_UNICO and options.formato_saida == OutputFormat.DXF:
-            merged_path = output_dir / "projeto_consolidado.dxf"
-            export_service.merge_dxfs_to_single_file(processed_files, merged_path)
-            final_file_path = merged_path
-            final_filename = "projeto_consolidado.dxf"
-            media_type = "application/dxf"
+            # 1. Define nomes e caminhos
+            merged_filename = "projeto_consolidado.dxf"
+            # Salvamos temporariamente FORA da pasta output para poder limpar a pasta depois
+            temp_merged_path = temp_dir / merged_filename
+            
+            # 2. Gera o DXF único (lendo os arquivos da pasta output)
+            export_service.merge_dxfs_to_single_file(processed_files, temp_merged_path)
+            
+            # 3. LIMPEZA TOTAL da pasta output
+            # Removemos todos os arquivos individuais que já foram processados
+            for f in output_dir.iterdir():
+                if f.is_file():
+                    try:
+                        os.remove(f)
+                    except Exception as e:
+                        print(f"Erro ao limpar arquivo temporário {f.name}: {e}")
+            
+            # 4. Move o arquivo consolidado para a pasta output (agora limpa)
+            final_merged_path = output_dir / merged_filename
+            shutil.move(str(temp_merged_path), str(final_merged_path))
+            
+            # 5. Gera o ZIP contendo APENAS o arquivo consolidado
+            zip_output = file_manager.create_zip(output_dir, "projeto_consolidado.zip")
+            final_file_path = zip_output
+            final_filename = "projeto_consolidado.zip"
 
         elif options.formato_saida == OutputFormat.PDF:
             pdf_dir = output_dir / "pdfs"
