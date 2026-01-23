@@ -4,7 +4,6 @@ import shutil
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
-
 from app.models.schemas import ProcessingOptions, OutputMode, OutputFormat
 from app.services.layer_mapper import LayerMapperService
 from app.services.dxf_processor import DXFProcessorService
@@ -13,7 +12,6 @@ from app.services.export_service import ExportService
 
 import ezdxf
 import os
-import shutil
 
 router = APIRouter()
 
@@ -131,22 +129,17 @@ async def process_dxf(
             final_file_path = zip_output
             final_filename = "projeto_consolidado.zip"
 
-        elif options.formato_saida == OutputFormat.PDF:
-            pdf_dir = output_dir / "pdfs"
-            pdf_dir.mkdir(exist_ok=True)
-            generated_pdfs = []
-            for dxf_path in processed_files:
-                pdf_name = dxf_path.stem + ".pdf"
-                pdf_path = pdf_dir / pdf_name
-                try:
-                    export_service.export_pdf_from_dxf(dxf_path, pdf_path)
-                    generated_pdfs.append(pdf_path)
-                except Exception:
-                    pass
-            zip_output = file_manager.create_zip(pdf_dir, "projeto_pdfs.zip")
-            final_file_path = zip_output
-            final_filename = "projeto_pdfs.zip"
-            media_type = "application/zip"
+        elif options.modo_saida == OutputMode.ARQUIVO_UNICO and options.formato_saida == OutputFormat.PDF:
+            merged_pdf_name = "projeto_completo.pdf"
+            merged_pdf_path = output_dir / merged_pdf_name
+            
+            # Gera o PDF multipágina
+            export_service.export_merged_pdf_from_dxfs(processed_files, merged_pdf_path)
+            
+            # Define o PDF como arquivo final
+            final_file_path = merged_pdf_path
+            final_filename = merged_pdf_name
+            media_type = "application/pdf"
 
         else:
             zip_output = file_manager.create_zip(output_dir, "dxf_processados.zip")

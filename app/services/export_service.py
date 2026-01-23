@@ -6,6 +6,7 @@ from typing import List
 import matplotlib.pyplot as plt
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+from matplotlib.backends.backend_pdf import PdfPages
 from ezdxf.addons import Importer
 from ezdxf.addons.drawing.config import Configuration, BackgroundPolicy, ColorPolicy
 from ezdxf import options
@@ -63,81 +64,93 @@ class ExportService:
 
     def export_pdf_from_dxf(self, dxf_path: Path, pdf_output_path: Path):
         """
-        Converte DXF para PDF (P/B) com ENQUADRAMENTO FORÇADO.
-        Usa finalize=False e aplica limites depois do desenho.
+        Gera PDF de 1 página. Reutiliza a função de merge passando uma lista única.
+        """
+        self.export_merged_pdf_from_dxfs([dxf_path], pdf_output_path)
+
+
+    def export_merged_pdf_from_dxfs(self, dxf_paths: List[Path], pdf_output_path: Path):
+        """
+        NOVA FUNÇÃO: Gera um ÚNICO PDF contendo todos os DXFs da lista como páginas.
         """
         try:
-            doc = ezdxf.readfile(str(dxf_path))
-            msp = doc.modelspace()
-
-            # --- 1. CONFIGURAÇÃO DE FONTES ---
+            # Garante cache de fontes
             try:
                 if hasattr(fonts, 'build_system_font_cache'):
                      fonts.build_system_font_cache()
             except Exception: pass
 
-            # --- 2. CÁLCULO DOS LIMITES (BBOX) ---
-            valid_entities = []
-            for e in msp:
-                if e.dxf.layer.lower() != 'defpoints':
-                    valid_entities.append(e)
-            
-            extents = ezdxf.bbox.extents(valid_entities)
-            
-            # Valores padrão A3
-            min_x, min_y = 0, 0
-            max_x, max_y = 420, 297
+            dxf_paths.sort(key=lambda p: p.name)
 
-            if extents.has_data:
-                min_x = extents.extmin.x
-                min_y = extents.extmin.y
-                max_x = extents.extmax.x
-                max_y = extents.extmax.y
-            
-            width = max_x - min_x
-            height = max_y - min_y
-            
-            print(f"DEBUG PDF: Dimensões {dxf_path.name}: {width:.2f}mm x {height:.2f}mm")
+            # Abre o arquivo PDF para escrita de múltiplas páginas
+            with PdfPages(str(pdf_output_path)) as pdf:
+                
+                for dxf_path in dxf_paths:
+                    try:
+                        doc = ezdxf.readfile(str(dxf_path))
+                        msp = doc.modelspace()
 
-            # Converte MM para Polegadas
-            figsize_inch = (width / 25.4, height / 25.4)
+                        # --- CÁLCULO BBOX (Mesma lógica aprovada) ---
+                        valid_entities = []
+                        for e in msp:
+                            if e.dxf.layer.lower() != 'defpoints':
+                                valid_entities.append(e)
+                        
+                        extents = ezdxf.bbox.extents(valid_entities)
+                        
+                        min_x, min_y = 0, 0
+                        max_x, max_y = 420, 297
 
-            # --- 3. RENDERIZAÇÃO ---
-            ctx = RenderContext(doc)
-            
-            cfg = Configuration.defaults().with_changes(
-                background_policy=BackgroundPolicy.WHITE,
-                color_policy=ColorPolicy.BLACK
-            )
-            
-            # Cria a figura com o tamanho exato
-            fig = plt.figure(figsize=figsize_inch)
-            
-            # Eixo ocupando 100% da figura
-            ax = fig.add_axes([0, 0, 1, 1])
-            ax.set_facecolor('white')
-            ax.set_axis_off()
-            
-            out = MatplotlibBackend(ax)
-            
-            # MUDANÇA CRÍTICA 1: finalize=False
-            # Isso impede o ezdxf de recalcular o zoom automaticamente
-            Frontend(ctx, out, config=cfg).draw_layout(msp, finalize=False)
-            
-            # MUDANÇA CRÍTICA 2: Aplicar limites DEPOIS de desenhar
-            # Garante que a "câmera" do PDF mostre exatamente essa região
-            ax.set_xlim(min_x, max_x)
-            ax.set_ylim(min_y, max_y)
-            
-            # Garante que preencha tudo sem travar aspect ratio (estica se necessário imperceptivelmente)
-            ax.set_aspect('auto')
-            
-            fig.savefig(str(pdf_output_path), dpi=300)
-            plt.close(fig)
-            
+                        if extents.has_data:
+                            min_x = extents.extmin.x
+                            min_y = extents.extmin.y
+                            max_x = extents.extmax.x
+                            max_y = extents.extmax.y
+                        
+                        width = max_x - min_x
+                        height = max_y - min_y
+                        
+                        figsize_inch = (width / 25.4, height / 25.4)
+
+                        # --- RENDERIZAÇÃO ---
+                        ctx = RenderContext(doc)
+                        
+                        cfg = Configuration.defaults().with_changes(
+                            background_policy=BackgroundPolicy.WHITE,
+                            color_policy=ColorPolicy.BLACK
+                        )
+                        
+                        # Cria figura para a página atual
+                        fig = plt.figure(figsize=figsize_inch)
+                        ax = fig.add_axes([0, 0, 1, 1])
+                        ax.set_facecolor('white')
+                        ax.set_axis_off()
+                        
+                        out = MatplotlibBackend(ax)
+                        
+                        # Desenha sem finalizar o zoom
+                        Frontend(ctx, out, config=cfg).draw_layout(msp, finalize=False)
+                        
+                        # Aplica limites exatos
+                        ax.set_xlim(min_x, max_x)
+                        ax.set_ylim(min_y, max_y)
+                        ax.set_aspect('auto')
+                        
+                        # Salva a página no PDF mestre
+                        pdf.savefig(fig, dpi=300)
+                        
+                        # Fecha figura da memória
+                        plt.close(fig)
+                        
+                        print(f"DEBUG PDF: Página adicionada: {dxf_path.name}")
+
+                    except Exception as e_inner:
+                        logger.error(f"Erro ao adicionar página {dxf_path.name}: {e_inner}")
+                        continue
+
         except Exception as e:
-            logger.error(f"Erro PDF {dxf_path.name}: {e}")
-            raise RuntimeError(f"Falha exportação PDF: {e}")
+            logger.error(f"Erro na exportação de PDF Merged: {e}")
+            raise RuntimeError(f"Falha exportação PDF unificado: {e}")
 
     def _copy_resources(self, source, target):
         """Copia Layers, Linetypes e TextStyles do source para o target"""
