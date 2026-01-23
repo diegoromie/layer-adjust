@@ -1,11 +1,16 @@
 import ezdxf
 import logging
+import os
 from pathlib import Path
 from typing import List
 import matplotlib.pyplot as plt
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 from ezdxf.addons import Importer
+from ezdxf.addons.drawing.config import Configuration, BackgroundPolicy, ColorPolicy
+from ezdxf import options
+from ezdxf.fonts import fonts
+import ezdxf.bbox
 
 logger = logging.getLogger(__name__)
 
@@ -58,35 +63,81 @@ class ExportService:
 
     def export_pdf_from_dxf(self, dxf_path: Path, pdf_output_path: Path):
         """
-        Converte um DXF para PDF usando Matplotlib.
-        Se for MULTIPLOS_ARQUIVOS, gera um PDF por DXF.
-        Se for ARQUIVO_UNICO, o ideal seria usar uma lib de merge de PDF depois, 
-        mas aqui vamos gerar o PDF do ModelSpace.
+        Converte DXF para PDF (P/B) com ENQUADRAMENTO FORÇADO.
+        Usa finalize=False e aplica limites depois do desenho.
         """
         try:
             doc = ezdxf.readfile(str(dxf_path))
             msp = doc.modelspace()
 
-            # Configuração de Renderização
-            ctx = RenderContext(doc)
-            # Melhora a visualização (fundo branco, cores escuras viram preto)
-            ctx.set_current_layout(msp)
+            # --- 1. CONFIGURAÇÃO DE FONTES ---
+            try:
+                if hasattr(fonts, 'build_system_font_cache'):
+                     fonts.build_system_font_cache()
+            except Exception: pass
+
+            # --- 2. CÁLCULO DOS LIMITES (BBOX) ---
+            valid_entities = []
+            for e in msp:
+                if e.dxf.layer.lower() != 'defpoints':
+                    valid_entities.append(e)
             
-            fig = plt.figure()
+            extents = ezdxf.bbox.extents(valid_entities)
+            
+            # Valores padrão A3
+            min_x, min_y = 0, 0
+            max_x, max_y = 420, 297
+
+            if extents.has_data:
+                min_x = extents.extmin.x
+                min_y = extents.extmin.y
+                max_x = extents.extmax.x
+                max_y = extents.extmax.y
+            
+            width = max_x - min_x
+            height = max_y - min_y
+            
+            print(f"DEBUG PDF: Dimensões {dxf_path.name}: {width:.2f}mm x {height:.2f}mm")
+
+            # Converte MM para Polegadas
+            figsize_inch = (width / 25.4, height / 25.4)
+
+            # --- 3. RENDERIZAÇÃO ---
+            ctx = RenderContext(doc)
+            
+            cfg = Configuration.defaults().with_changes(
+                background_policy=BackgroundPolicy.WHITE,
+                color_policy=ColorPolicy.BLACK
+            )
+            
+            # Cria a figura com o tamanho exato
+            fig = plt.figure(figsize=figsize_inch)
+            
+            # Eixo ocupando 100% da figura
             ax = fig.add_axes([0, 0, 1, 1])
+            ax.set_facecolor('white')
+            ax.set_axis_off()
             
             out = MatplotlibBackend(ax)
             
-            # O Frontend orquestra o desenho
-            Frontend(ctx, out).draw_layout(msp, finalize=True)
+            # MUDANÇA CRÍTICA 1: finalize=False
+            # Isso impede o ezdxf de recalcular o zoom automaticamente
+            Frontend(ctx, out, config=cfg).draw_layout(msp, finalize=False)
             
-            # Salva PDF
+            # MUDANÇA CRÍTICA 2: Aplicar limites DEPOIS de desenhar
+            # Garante que a "câmera" do PDF mostre exatamente essa região
+            ax.set_xlim(min_x, max_x)
+            ax.set_ylim(min_y, max_y)
+            
+            # Garante que preencha tudo sem travar aspect ratio (estica se necessário imperceptivelmente)
+            ax.set_aspect('auto')
+            
             fig.savefig(str(pdf_output_path), dpi=300)
-            plt.close(fig) # Libera memória do Matplotlib
+            plt.close(fig)
             
         except Exception as e:
-            logger.error(f"Erro ao renderizar PDF {dxf_path.name}: {e}")
-            raise RuntimeError(f"Falha na exportação PDF: {e}")
+            logger.error(f"Erro PDF {dxf_path.name}: {e}")
+            raise RuntimeError(f"Falha exportação PDF: {e}")
 
     def _copy_resources(self, source, target):
         """Copia Layers, Linetypes e TextStyles do source para o target"""

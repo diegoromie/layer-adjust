@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 dxfapi.py
+*.ttf
 
 #Outros
 newlayers.xlsx
