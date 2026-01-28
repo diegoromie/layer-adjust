@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 from matplotlib.backends.backend_pdf import PdfPages
-from ezdxf.addons import Importer
+from ezdxf import xref
 from ezdxf.addons.drawing.config import Configuration, BackgroundPolicy, ColorPolicy
 from ezdxf import options
 from ezdxf.fonts import fonts
@@ -27,37 +27,31 @@ class ExportService:
         doc_master = ezdxf.new()
         file_paths.sort(key=lambda p: p.name)
 
+        logger.info(f"Iniciando merge DXF com xref para {len(file_paths)} arquivos.")
+
         for i, file_path in enumerate(file_paths):
             try:
                 doc_source = ezdxf.readfile(str(file_path))
-                msp_source = doc_source.modelspace()
                 
                 # Nome do Layout
                 layout_name = f"FL {i+1:02d}"
                 if layout_name in doc_master.layouts:
-                    layout_name = f"FL {i+1:02d}_{file_path.stem}"
+                    layout_name = f"FL {i+1:02d}_{file_path.stem}"[:255]
                 
                 layout_target = doc_master.layouts.new(layout_name)
 
                 # --- MUDANÇA PRINCIPAL: USAR IMPORTER ---
                 try:
-                    importer = Importer(doc_source, doc_master)
-                    importer.import_tables('*') # Importa Layers, Linetypes, Styles...
-                    importer.finalize()
+                    loader = xref.Loader(doc_source, doc_master, conflict_policy=xref.ConflictPolicy.KEEP)
+                    loader.load_modelspace(target_layout=layout_target)
+                    loader.execute()
                 except Exception as e:
-                    logger.warning(f"Aviso importando tabelas de {file_path.name}: {e}")
+                    logger.warning(f"Erro no xref loader para {file_path.name}: {e}")
 
-                # Copia entidades
-                for entity in msp_source:
-                    try:
-                        new_entity = entity.copy()
-                        layout_target.add_entity(new_entity)
-                    except: pass
-                
-                del doc_source 
+                del doc_source
 
             except Exception as e:
-                logger.error(f"Erro ao mesclar {file_path.name}: {e}")
+                logger.error(f"Erro ao ler/mesclar arquivo {file_path.name}: {e}")
 
         doc_master.saveas(str(output_path))
 
